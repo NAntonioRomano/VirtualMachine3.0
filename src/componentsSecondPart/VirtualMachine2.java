@@ -3,7 +3,6 @@ package componentsSecondPart;
 import java.util.HashMap;
 
 import components.Registers;
-import components.SegmentTable;
 import components.VirtualMachine;
 import components.VirtualMainMemory;
 import mnemonic.*;

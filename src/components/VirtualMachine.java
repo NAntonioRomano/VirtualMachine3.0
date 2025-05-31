@@ -4,7 +4,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
-import java.util.Map; // Importación añadida para usar Map
 
 import componentsSecondPart.SegmentTable2;
 import mnemonic.*;
@@ -22,8 +21,8 @@ public class VirtualMachine {
     protected HashMap<Integer,Mnemonic2> mnemonics2;
     protected Operand[] operandA;
     protected Operand[] operandB;
-    protected boolean breakpoint = true;
-    protected boolean disassembler = true;
+    protected boolean breakpoint = false;
+    protected boolean disassembler = false;
     protected String vmi_file;
 
 
@@ -215,88 +214,243 @@ public class VirtualMachine {
 
     //FIN BLOQUE CARGA DE PROGRAMA EN MEMORIA PRINCIPAL
 
-    //INICIA BLOQUE DISASSEMBLER
+    // INICIA BLOQUE DISASSEMBLER
 
-    private int extractOperandValue(byte[] codeSegment, int startIndex, int type) {
+    private int extractOperand(byte[] code, int start, int type) {
         int value = 0;
         for (int i = 0; i < type; i++) {
-            value = (value << 8) | (codeSegment[startIndex + i] & 0xFF);
+            value = (value << 8) | (code[start + i] & 0xFF);
         }
         return value;
     }
 
-    private void printHexBytesAndPad(byte[] codeSegment, int startIndex, int count, int totalWidth) {
+    private void printHexAndPad(byte[] code, int start, int count, int width) {
         for (int i = 0; i < count; i++) {
-            System.out.print(String.format("%02X ", codeSegment[startIndex + i]));
+            System.out.print(String.format("%02X ", code[start + i] & 0xFF));
         }
-        for (int i = count; i < totalWidth; i++) {
+        for (int i = count; i < width; i++) {
             System.out.print("   ");
         }
     }
 
-    private int handleNoOperandInstruction(int opcode, int instructionStartMemoryPos, int instructionByte) {
-        System.out.print(String.format("[%04X] %02X ", instructionStartMemoryPos, instructionByte));
-        printHexBytesAndPad(null, 0, 0, 8);
+    private int handleNoOp(int opcode, int memPos, int instructionByte) {
+        System.out.print(String.format("[%04X] %02X ", memPos, instructionByte));
+        printHexAndPad(null, 0, 0, 8);
         System.out.println("| " + this.mnemonics0.get(opcode).toString());
         return 1;
     }
 
-    private int handleSingleOperandInstruction(int opcode, int instructionStartMemoryPos, int instructionByte, byte[] codeSegment, int currentIndex) {
-        int typeOpA = (instructionByte >> 6) & 0x3;
-        int operandAValue = extractOperandValue(codeSegment, currentIndex + 1, typeOpA);
-        this.operandA[typeOpA].setData(operandAValue);
+    private int handleSingleOp(int opcode, int memPos, int instructionByte, byte[] code, int currentIdx) {
+        int opAType = (instructionByte >> 6) & 0x3;
+        if (currentIdx + 1 + opAType > code.length) { 
+            throw new IllegalArgumentException("Insufficient bytes for single operand instruction.");
+        }
+        int opAValue = extractOperand(code, currentIdx + 1, opAType);
+        this.operandA[opAType].setData(opAValue);
 
-        System.out.print(String.format("[%04X] %02X ", instructionStartMemoryPos, instructionByte));
-        printHexBytesAndPad(codeSegment, currentIndex + 1, typeOpA, 8);
-        System.out.println("| " + this.mnemonics1.get(opcode).toString(this.operandA[typeOpA]));
-        return typeOpA + 1;
+        System.out.print(String.format("[%04X] %02X ", memPos, instructionByte));
+        printHexAndPad(code, currentIdx + 1, opAType, 8);
+        System.out.println("| " + this.mnemonics1.get(opcode).toString(this.operandA[opAType]));
+        return opAType + 1;
     }
 
-    private int handleDoubleOperandInstruction(int opcode, int instructionStartMemoryPos, int instructionByte, byte[] codeSegment, int currentIndex) {
-        int typeOpA = (instructionByte >> 4) & 0x3;
-        int typeOpB = (instructionByte >> 6) & 0x3;
+    private int handleDoubleOp(int opcode, int memPos, int instructionByte, byte[] code, int currentIdx) {
+        int opAType = (instructionByte >> 4) & 0x3;
+        int opBType = (instructionByte >> 6) & 0x3;
 
-        int operandBValue = extractOperandValue(codeSegment, currentIndex + 1, typeOpB);
-        this.operandB[typeOpB].setData(operandBValue);
+        if (currentIdx + 1 + opBType + opAType > code.length) { 
+            throw new IllegalArgumentException("Insufficient bytes for double operand instruction.");
+        }
 
-        int operandAValue = extractOperandValue(codeSegment, currentIndex + 1 + typeOpB, typeOpA);
-        this.operandA[typeOpA].setData(operandAValue);
+        int opBValue = extractOperand(code, currentIdx + 1, opBType);
+        this.operandB[opBType].setData(opBValue);
 
-        System.out.print(String.format("[%04X] %02X ", instructionStartMemoryPos, instructionByte));
-        printHexBytesAndPad(codeSegment, currentIndex + 1, typeOpA + typeOpB, 8);
-        System.out.println("| " + this.mnemonics2.get(opcode).toString(this.operandA[typeOpA], this.operandB[typeOpB]));
-        return typeOpA + typeOpB + 1;
+        int opAValue = extractOperand(code, currentIdx + 1 + opBType, opAType);
+        this.operandA[opAType].setData(opAValue);
+
+        System.out.print(String.format("[%04X] %02X ", memPos, instructionByte));
+        printHexAndPad(code, currentIdx + 1, opAType + opBType, 8);
+        System.out.println("| " + this.mnemonics2.get(opcode).toString(this.operandA[opAType], this.operandB[opBType]));
+        return opAType + opBType + 1;
     }
-	
-    public void disassembler(byte[] offset) throws Exception {
+
+    private int handleString(byte[] code, int startIdx, int memPos) {
+        StringBuilder hex = new StringBuilder();
+        StringBuilder ascii = new StringBuilder();
+        int currentLen = 0;
+        int originalLen = 0;
+
+        while (startIdx + originalLen < code.length && code[startIdx + originalLen] != 0x00) {
+            originalLen++;
+        }
+        if (startIdx + originalLen < code.length) {
+            originalLen++; 
+        }
+
+        int bytesToProcess = Math.min(originalLen, code.length - startIdx);
+
+        for (int i = 0; i < bytesToProcess; i++) {
+            byte b = code[startIdx + i];
+            
+            if (currentLen < 6) {
+                hex.append(String.format("%02X ", b & 0xFF));
+            } else if (currentLen == 6 && originalLen > 7) {
+                hex.append(".. ");
+            }
+            
+            if (b >= 32 && b <= 126) {
+                ascii.append((char) b);
+            } else {
+                ascii.append(".");
+            }
+            currentLen++;
+        }
+        
+        String hexPart = hex.toString().trim();
+        int padding = Math.max(0, 8 * 3 - hexPart.length());
+        
+        System.out.print(String.format("[%04X] %s", memPos, hexPart));
+        for (int i = 0; i < padding; i++) {
+            System.out.print(" ");
+        }
+        System.out.println("| \"" + ascii.toString() + "\"");
+
+        return bytesToProcess;
+    }
+
+    public void disassembleCodeSegment(int offset) throws Exception {
         int index = 0;
-        int instructionStartMemoryPos = 0;
-        int memoryIndex = this.segTable.LogicToPhysic(this.registers.getRegister(0));
-        int codeSegmentBase = this.segTable.getBase(this.registers.getRegister(0) >> 16);
+        int codeSegLogicalBase = this.segTable.getBase(this.registers.getRegister(0) >> 16); 
+        int currentLogicalOffset = this.segTable.getSize(this.registers.getRegister(0) >> 16);
+
+        int codeSegPhysicalBase = this.segTable.LogicToPhysic(this.registers.getRegister(0));
         byte[] codeSegment = new byte[this.segTable.getSize(this.registers.getRegister(0) >> 16)];
 
-        System.arraycopy(this.virtualMemory.getMemory(), codeSegmentBase, codeSegment, 0, this.segTable.getSize(this.registers.getRegister(0) >> 16));
+        System.arraycopy(this.virtualMemory.getMemory(), codeSegPhysicalBase, codeSegment, 0, this.segTable.getSize(this.registers.getRegister(0) >> 16));
 
-        System.out.println("\n------------------DISASSEMBLER------------------\n");
+
+        int entryPointLogicalAddr = offset; 
 
         while (index < codeSegment.length) {
-            memoryIndex += index - instructionStartMemoryPos;
+            int currentMemPos = codeSegLogicalBase + index;
+
+            if (currentMemPos == entryPointLogicalAddr) {
+                System.out.print(">");
+            } else {
+                System.out.print(" ");
+            }
+
             int instructionByte = codeSegment[index] & 0xFF;
             int opcode = this.getOpcode(instructionByte);
             int operandCount = this.cantOP(instructionByte);
-            instructionStartMemoryPos = memoryIndex;
+            
+            int bytesAdvanced = 0;
+
+            try {
+                if (this.mnemonics0.containsKey(opcode)) {
+                    bytesAdvanced = handleNoOp(opcode, currentMemPos, instructionByte);
+                } else if (this.mnemonics1.containsKey(opcode)) {
+                    bytesAdvanced = handleSingleOp(opcode, currentMemPos, instructionByte, codeSegment, index);
+                } else if (this.mnemonics2.containsKey(opcode)) {
+                    bytesAdvanced = handleDoubleOp(opcode, currentMemPos, instructionByte, codeSegment, index);
+                } else {
+                    int nullByteIdx = -1;
+                    for (int i = index; i < codeSegment.length && i < index + 32; i++) {
+                        if (codeSegment[i] == 0x00) {
+                            nullByteIdx = i;
+                            break;
+                        }
+                    }
+                    
+                    if (nullByteIdx != -1) {
+                        bytesAdvanced = handleString(codeSegment, index, currentMemPos);
+                    } else {
+                        System.out.print(String.format("[%04X] %02X ", currentMemPos, instructionByte));
+                        printHexAndPad(null, 0, 0, 8);
+                        System.out.println("| DB " + String.format("%02X", instructionByte));
+                        bytesAdvanced = 1;
+                    }
+                }
+            } catch (IllegalArgumentException e) {
+                int nullByteIdx = -1;
+                for (int i = index; i < codeSegment.length && i < index + 32; i++) {
+                    if (codeSegment[i] == 0x00) {
+                        nullByteIdx = i;
+                        break;
+                    }
+                }
+                
+                if (nullByteIdx != -1) {
+                    bytesAdvanced = handleString(codeSegment, index, currentMemPos);
+                } else {
+                    System.out.print(String.format("[%04X] %02X ", currentMemPos, instructionByte));
+                    printHexAndPad(null, 0, 0, 8);
+                    System.out.println("| DB " + String.format("%02X", instructionByte));
+                    bytesAdvanced = 1;
+                }
+            }
+            index += bytesAdvanced;
+        }
+    }
+
+    public void disassembleConstantSegment() throws Exception {
+        int ksLogicalAddr = this.registers.getRegister(4); 
+        
+        int segmentSel = ksLogicalAddr >> 16;
+        int initialOffset = ksLogicalAddr & 0x0000FFFF;
+
+        int ksPhysicalBase = this.segTable.LogicToPhysic(ksLogicalAddr);
+        int ksSize = this.segTable.getSize(segmentSel);
+
+        byte[] ksSegment = new byte[ksSize - initialOffset];
+        System.arraycopy(this.virtualMemory.getMemory(), ksPhysicalBase + initialOffset, ksSegment, 0, ksSize - initialOffset);
 
 
-            if (operandCount == 0) {
-                index += handleNoOperandInstruction(opcode, instructionStartMemoryPos, instructionByte);
-            } else if (operandCount == 1) {
-                index += handleSingleOperandInstruction(opcode, instructionStartMemoryPos, instructionByte, codeSegment, index);
-            } else {
-                index += handleDoubleOperandInstruction(opcode, instructionStartMemoryPos, instructionByte, codeSegment, index);
+        int index = 0;
+        int currentLogicalMemPos = ksLogicalAddr;
+
+        while (index < ksSegment.length) {
+            int currentByte = ksSegment[index] & 0xFF;
+            
+            int nullByteIdx = -1;
+
+            for (int i = index; i < ksSegment.length && i < index + 256; i++) {
+                if (ksSegment[i] == 0x00) {
+                    nullByteIdx = i;
+                    break;
+                }
             }
 
+            if (nullByteIdx != -1) {
+                int stringLen = (nullByteIdx - index) + 1; 
+                if (index + stringLen <= ksSegment.length) {
+                    index += handleString(ksSegment, index, currentLogicalMemPos);
+                    currentLogicalMemPos = ksLogicalAddr + index;
+                } else {
+
+                    System.out.print(String.format("  [%04X] %02X ", currentLogicalMemPos, currentByte));
+                    printHexAndPad(null, 0, 0, 8);
+                    System.out.println("| DB " + String.format("%02X", currentByte));
+                    index++;
+                    currentLogicalMemPos++;
+                }
+            } else {
+                System.out.print(String.format("  [%04X] %02X ", currentLogicalMemPos, currentByte));
+                printHexAndPad(null, 0, 0, 8);
+                System.out.println("| DB " + String.format("%02X", currentByte));
+                index++;
+                currentLogicalMemPos++;
+            }
         }
-        System.out.println("\n-------------------------------------------------\n");
+
+    }
+
+    public void disassembler(byte[] offset) throws Exception{
+        int offset_entry_point = ((int)(offset[0] << 8)|(int)(offset[1]) & 0xFF);
+        System.out.println("\n----------------------DISASSEMBLER--------------------\n");
+        disassembleConstantSegment();
+        disassembleCodeSegment(offset_entry_point);
+        System.out.println("\n------------------------------------------------------\n");
     }
 
 
@@ -326,7 +480,7 @@ public class VirtualMachine {
                 sys.BREAKPOINT();
             }else{
                 this.Operation(codop, A, B, this.cantOP(instruction));
-            }
+            } 
         }
 
     }
@@ -392,15 +546,12 @@ public class VirtualMachine {
 
     protected void Operation(int codop, Operand A, Operand B, int cantop) throws Exception{
         if(cantop == 0 && (codop == 0x0F || codop == 0x0E)) {
-            //System.out.println("[DEBUG] " + mnemonics0.get(codop).toString());
             mnemonics0.get(codop).operate();
 
         }else if(cantop == 1 && codop >= 0x00 && codop <= 0x0D) {
-            //System.out.println("[DEBUG] " + mnemonics1.get(codop).toString(B));
             mnemonics1.get(codop).operate(B);
 
         }else if(cantop == 2 && codop >= 0x10 && codop <= 0x1E) {
-            //System.out.println("[DEBUG] " + mnemonics2.get(codop).toString(A,B));
             mnemonics2.get(codop).operate(A, B);
 
         }else {

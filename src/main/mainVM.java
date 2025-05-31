@@ -2,22 +2,17 @@ package main;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
-
-import components.VirtualMachine;
 import componentsSecondPart.VirtualMachine2;
 import componentsSecondPart.VirtualMainMemory2;
-import components.VirtualMainMemory;
 
 public class mainVM {	
-	public static void main(String[] args) throws Exception {
+	public static void main(String[] args){
 		try{
 			VirtualMainMemory2 vmm = new VirtualMainMemory2(16384);
 			VirtualMachine2 vm = new VirtualMachine2(vmm);
-			String vmi_file_path = "debug.vmi";
-			//String params[] = null;
-			String [] params = {"naranja","mandarina","manzana"};
-			String file_path = "samplevmx.vmx";
-			//String file_path = args[0];
+			String vmi_file_path = null;
+			String params[] = null;
+			String file_path = args[0];
 			vm.validateExtension(file_path);
 			byte[] allbytes = Files.readAllBytes(Paths.get(file_path));
 			vm.verify(allbytes);
@@ -61,16 +56,11 @@ public class mainVM {
 				vm.setVmi_file(vmi_file_path);
 				
 				if(params != null){
-					for(int i = 0; i < params.length ; i++){
-						System.out.println(params[i]);
-					}
-					System.out.println(vm.getParamSize(params));
 					vm.loadParams(params);
 					vm.startMemory(file_path,allbytes,vm.getParamSize(params) + params.length * 4);
 					vm.initStack(params.length, vm.getParamSize(params));
 				}else{
 					vm.startMemory(file_path,allbytes,vm.getParamSize(params) + 0);
-
 					if(!file_path.endsWith("vmi"))
 						vm.initStack(0,-1);
 				}
@@ -87,7 +77,6 @@ public class mainVM {
 
 		}catch(Exception e){
 			System.out.println("Error: " + e.getMessage());
-			throw e;
 		}
 	}
 }
