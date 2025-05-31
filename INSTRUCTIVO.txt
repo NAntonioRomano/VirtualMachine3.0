@@ -1,0 +1,7 @@
+Instructivo para correr la maquina virtual
+
+Desde la consola, ubicada en la ruta donde esta guardado el proyecto ejecutar el siguiente comando:
+
+startVM.bat [ruta\al\archivo.vmx] [-d] (Sin corchetes)
+
+
